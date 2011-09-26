@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+//#include <wait.h>
 
 using namespace std;
 
@@ -15,6 +16,8 @@ typedef struct commandTime {
    char * command;
    long userTime;
    long systemTime;
+   long uuserTime;
+   long usystemTime;
    bool background;
    bool end;
 };
@@ -28,9 +31,9 @@ char * fileNameRead(char *, int count);
 vector<commandTime *> statuses; 
 void printStats();
 void waitLoop();
+void backgroundWait();
 void quit();
 struct rusage timings;
-
 
 int main ( void ){
 
@@ -40,19 +43,18 @@ int count = 0;
 pid_t * pipePid;
 char * filename[2];
 
-bool background;
-
-char * Amp = "&";
-char * Pipe = "|";
-char * Space = " ";
-char * FileIn = "<";
-char * FileOut = ">";
+char * Amp = (char *)"&";
+char * Pipe = (char *)"|";
+char * Space = (char *)" ";
+char * FileIn = (char *)"<";
+char * FileOut = (char *)">";
 bool fileWrite = false;
 bool fileRead = false;
+bool background = false;
 
 while(result > -1){
 
-    char * ctoken = " ";
+    backgroundWait();
     
 	cout << "$> ";
 
@@ -94,32 +96,26 @@ while(result > -1){
         filename[0] = NULL;
         filename[1] = NULL;
 
-        //char * pcom;
         const char * source = pipedCommands[i];
 
         statuses.push_back(new commandTime);
 
-        //statuses.back()->command = new char[sizeof(pcom)];
-        statuses.back()->command = new char[sizeof(source)];        
+        statuses.back()->command = new char[strlen(source)+1];        
 
         strcpy(statuses.back()->command, source);
 
-        statuses.back()->background = false;
-
-        cout << "From Vector: " << statuses.back()->command << endl;
+        statuses.back()->background = background;
 
         if(filename[0] = fileNameWrite(pipedCommands[i], i)){
             fileDesc0 = open(filename[0], O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
             fileWrite = true;
             position = i;
-            //cout << "found write" << endl;
         }
         
         if(filename[1] = fileNameRead(pipedCommands[i], i)){
             fileDesc1 = open(filename[1], O_RDONLY);
             fileRead = true;
             position = i;
-            //cout << "found read" << endl;
         }
 
 
@@ -134,7 +130,6 @@ while(result > -1){
 
         if(fileWrite){
             std_out = fileDesc0;
-            //cout << "Setting stdout to fileDesc" << endl;
         }
         if(fileRead){
             std_in = fileDesc1;
@@ -144,10 +139,13 @@ while(result > -1){
                 
         pipePid[i] = forkPipe(commands, std_in, std_out, fileWrite, fileRead);
 
-        //Setting the pid for the stats struct
+        //Setting the pid for the stats struct and setting times to zero to check for finished processes later
         statuses.back()->pid = pipePid[i];
+        statuses.back()->userTime = 0;
+        statuses.back()->systemTime = 0;
+        statuses.back()->uuserTime = 0;
+        statuses.back()->usystemTime = 0;
 
-        cout << statuses.back()->pid << endl;
 
         if(fileWrite){
             close(std_out);
@@ -167,15 +165,15 @@ while(result > -1){
         delete commands;
     }
     
-    //if(!background)    
+    if(!background){    
         waitLoop();
-
-    if(background){
-        cout << "BACKGROUND" << endl;
-        background = false;
     }
 
-
+    if(background){
+        backgroundWait();
+        background = false;
+    }
+        
     delete pipedCommands;
 }
 
@@ -229,12 +227,12 @@ pid_t forkPipe(char ** commands, int std_in, int std_out, bool fileWrite, bool f
     if(pid_t child = fork())
         return child;
 
-    if(std_in != -1){ //&& std_in != 0){
+    if(std_in != -1){
         dup2(std_in, 0);
         close(std_in);
     }
         
-    if(std_out != -1){ //&& std_in != 1){
+    if(std_out != -1){
         dup2(std_out, 1);
         close(std_out);
     }
@@ -278,23 +276,69 @@ char * fileNameRead(char * pipeCommands, int count){
 
 void printStats(){
     for(int i = 0; i < statuses.size(); i++){
-        cout << "Command: " <<  statuses.at(i)->command << " PID: " << statuses.at(i)->pid << endl;
-        cout << "User Time: " << statuses.at(i)->userTime << " || ";
-        cout << "System Time : " << statuses.at(i)->systemTime << endl;
+        cout << endl;
+        cout << "-------------------------------------" << endl;
+        cout << "Command: " <<  statuses.at(i)->command;
+        if(statuses.at(i)->background == true) cout << "&";
+        cout << " PID: " << statuses.at(i)->pid << endl;
+        cout << "User Time (s): " << statuses.at(i)->userTime << " || ";
+        cout << "System Time (s): " << statuses.at(i)->systemTime << endl;
+        cout << "User Time (micro s): " << statuses.at(i)->uuserTime << " || ";
+        cout << "System Time (micro s): " << statuses.at(i)->usystemTime << endl;
+        cout << "-------------------------------------" << endl;
+        cout << endl;
       }     
 }
 
 void waitLoop(){
     for(int i = 0; i < statuses.size(); i++){
         if(statuses.at(i)->background == false && statuses.at(i)->end == false){
-            wait4(statuses.at(i)->pid, NULL, NULL, &timings);
+            wait4(statuses.at(i)->pid, NULL, 0, &timings);
+            
             //Setting userTime and systemTime to stats struct
-            statuses.at(i)->userTime = timings.ru_stime.tv_usec;
-            statuses.at(i)->systemTime = timings.ru_utime.tv_usec;
+            cout << endl;
+            cout << "-------------------------------------" << endl;
+            statuses.at(i)->userTime = timings.ru_utime.tv_sec;
+            statuses.at(i)->systemTime = timings.ru_stime.tv_sec;
+            statuses.at(i)->uuserTime = timings.ru_utime.tv_usec;
+            statuses.at(i)->usystemTime = timings.ru_stime.tv_usec;
             statuses.at(i)->end = true;
+            cout << "-------------------------------------" << endl;
+            cout << endl;
+
         }
     }
 
+}
+
+void backgroundWait(){
+    for(int i = 0; i < statuses.size(); i++){
+        if(statuses.at(i)->end == false){
+            if(wait4(statuses.at(i)->pid, NULL, WNOHANG, &timings) > 0){
+            
+                //Setting userTime and systemTime to stats struct
+                statuses.at(i)->userTime = timings.ru_utime.tv_sec;
+                statuses.at(i)->systemTime = timings.ru_stime.tv_sec;
+                statuses.at(i)->uuserTime = timings.ru_utime.tv_usec;
+                statuses.at(i)->usystemTime = timings.ru_stime.tv_usec;
+                statuses.at(i)->end = true;
+                //statuses.at(i)->background = false;
+
+                //Print because background process has finished
+                cout << endl;
+                cout << "-------------------------------------" << endl;
+                cout << "Background Process: " << statuses.at(i)->command;
+                if(statuses.at(i)->background == true) cout << "&";
+                cout << " PID: " << statuses.at(i)->pid << " has finished." << endl;
+                cout << "User Time (s): " << statuses.at(i)->userTime << " || ";
+                cout << "System Time (s): " << statuses.at(i)->systemTime << endl;
+                cout << "User Time (micro s): " << statuses.at(i)->uuserTime << " || ";
+                cout << "System Time (micro s): " << statuses.at(i)->usystemTime << endl;
+                cout << "-------------------------------------" << endl;
+                cout << endl;
+            }
+        }
+    }
 }
 
 void quit(){
@@ -307,31 +351,3 @@ void quit(){
     }
     exit(0);
 }
-
-
-/*int forkChild(char ** arr, struct rusage timings){
-    pid_t pid;
-	
-	pid = fork();
-
-	if(pid < 0){
-		cout << "Fork Failed" << endl;
-		return -1;
-	}
-
-	else if (pid == 0){
-		execvp(arr[0], arr);
-		cout << "Unknown command" << endl;
-    	return 0;
-	}
-
-	else{
-        //wait(NULL);
-		wait4(pid, NULL, NULL, &timings);
-		cout << "Child Complete --- " << endl;
-        cout << "System Time: " << timings.ru_stime.tv_sec << " " << timings.ru_stime.tv_usec << endl;
-        cout << "User Time:  " << timings.ru_utime.tv_sec << " " << timings.ru_utime.tv_usec << endl;
-
-		return 0;
-	}
-}	*/
